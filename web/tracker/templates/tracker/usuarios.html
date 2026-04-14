@@ -1,0 +1,184 @@
+{% extends 'tracker/base.html' %}
+{% block title %}Usuarios — Nico-Kiwi Tracker{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div class="page-title-section">
+    <h1 class="page-title"><span class="page-title-icon">👥</span> Usuarios</h1>
+    <p class="page-subtitle">Gestión de usuarios del sistema</p>
+  </div>
+  <div class="page-actions">
+    {% if rol == 'admin' %}
+    <button class="btn btn-primary" onclick="abrirNuevo()">➕ Nuevo Usuario</button>
+    {% endif %}
+  </div>
+</div>
+
+{% if rol != 'admin' %}
+<div class="empty-state">
+  <span class="empty-icon">🔒</span>
+  <p>Solo los administradores pueden gestionar usuarios.</p>
+</div>
+{% else %}
+
+<div class="table-card">
+  <div class="table-header">
+    <div class="table-title">👥 Usuarios del sistema <span id="count-badge" class="badge badge-green" style="margin-left:8px">0</span></div>
+    <div class="table-search-wrap">
+      <span class="search-icon">🔍</span>
+      <input class="table-search" id="buscador" type="text" placeholder="Buscar usuario..." oninput="filtrar()"/>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>#</th><th>Usuario</th><th>Rol</th><th>Acciones</th></tr>
+      </thead>
+      <tbody id="tbody-usuarios">
+        <tr><td colspan="4"><div class="empty-state"><span class="empty-icon">⏳</span><p>Cargando...</p></div></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="table-footer">
+    <span id="footer-count">Cargando...</span>
+  </div>
+</div>
+
+<!-- Modal Nuevo/Editar Usuario -->
+<div class="modal-backdrop" id="modal-usuario">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="modal-usuario-titulo">👤 Nuevo Usuario</div>
+      <button class="modal-close" onclick="cerrarModal('modal-usuario')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="usuario-id"/>
+      <div class="form-group">
+        <label class="form-label">Nombre de usuario</label>
+        <input id="usuario-nombre" class="form-input" type="text" placeholder="Ej: operador1"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Contraseña</label>
+        <input id="usuario-pass" class="form-input" type="password" placeholder="Nueva contraseña"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Rol</label>
+        <select id="usuario-rol" class="form-select">
+          <option value="operador">Operador</option>
+          <option value="admin">Administrador</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="cerrarModal('modal-usuario')">Cancelar</button>
+      <button class="btn btn-primary" id="btn-guardar-usuario" onclick="guardarUsuario()">💾 Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Confirmar Eliminar -->
+<div class="modal-backdrop" id="modal-confirmar">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-header">
+      <div class="modal-title">⚠️ Confirmar eliminación</div>
+      <button class="modal-close" onclick="cerrarModal('modal-confirmar')">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="color:var(--text-secondary);font-size:14px">¿Eliminar al usuario <strong id="confirmar-desc"></strong>? Esta acción no se puede deshacer.</p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="cerrarModal('modal-confirmar')">Cancelar</button>
+      <button class="btn btn-danger" id="btn-confirmar-eliminar">🗑️ Eliminar</button>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+{% if rol == 'admin' %}
+<script>
+let usuarios = [];
+
+async function cargarUsuarios(){
+  const d = await api('/api/usuarios/');
+  if(!d.ok){ toast('Error al cargar usuarios','error'); return; }
+  usuarios = d.data;
+  renderTabla(usuarios);
+}
+
+function renderTabla(data){
+  const tb = document.getElementById('tbody-usuarios');
+  document.getElementById('count-badge').textContent = data.length;
+  document.getElementById('footer-count').textContent = `${data.length} usuario${data.length!==1?'s':''}`;
+  if(!data.length){
+    tb.innerHTML = `<tr><td colspan="4"><div class="empty-state"><span class="empty-icon">👥</span><p>No hay usuarios</p></div></td></tr>`;
+    return;
+  }
+  tb.innerHTML = data.map(u=>`
+    <tr>
+      <td><span class="badge badge-green">#${u.id}</span></td>
+      <td><strong>${u.username}</strong></td>
+      <td><span class="badge ${u.role==='admin'?'badge-yellow':'badge-blue'}">${u.role==='admin'?'👑 Admin':'🔧 Operador'}</span></td>
+      <td>
+        <div class="row-actions">
+          <button class="btn btn-warning btn-sm" onclick="editarUsuario(${u.id}, \`${u.username.replace(/`/g,'\\`')}\`, '${u.role}')">✏️ <span>Editar</span></button>
+          <button class="btn btn-danger btn-sm" onclick="confirmarEliminar(${u.id}, \`${u.username.replace(/`/g,'\\`')}\`)">🗑️ <span>Eliminar</span></button>
+        </div>
+      </td>
+    </tr>`).join('');
+}
+
+function filtrar(){
+  const q = document.getElementById('buscador').value.toLowerCase();
+  renderTabla(usuarios.filter(u => u.username.toLowerCase().includes(q) || u.role.toLowerCase().includes(q)));
+}
+
+function abrirNuevo(){
+  document.getElementById('usuario-id').value='';
+  document.getElementById('usuario-nombre').value='';
+  document.getElementById('usuario-pass').value='';
+  document.getElementById('usuario-rol').value='operador';
+  document.getElementById('modal-usuario-titulo').textContent='👤 Nuevo Usuario';
+  abrirModal('modal-usuario');
+}
+
+function editarUsuario(id, nombre, rol){
+  document.getElementById('usuario-id').value=id;
+  document.getElementById('usuario-nombre').value=nombre;
+  document.getElementById('usuario-pass').value='';
+  document.getElementById('usuario-rol').value=rol;
+  document.getElementById('modal-usuario-titulo').textContent=`✏️ Editar Usuario: ${nombre}`;
+  abrirModal('modal-usuario');
+}
+
+async function guardarUsuario(){
+  const id       = document.getElementById('usuario-id').value;
+  const username = document.getElementById('usuario-nombre').value.trim();
+  const password = document.getElementById('usuario-pass').value.trim();
+  const role     = document.getElementById('usuario-rol').value;
+  if(!username||!password){ toast('Completá usuario y contraseña','error'); return; }
+  const btn=document.getElementById('btn-guardar-usuario');
+  btn.disabled=true;
+  const url = id?`/api/usuarios/${id}/`:'/api/usuarios/';
+  const method = id?'PUT':'POST';
+  const d = await api(url,method,{username,password,role});
+  if(d.ok){ toast(d.mensaje,'success'); cerrarModal('modal-usuario'); cargarUsuarios(); }
+  else toast(d.error||'Error al guardar','error');
+  btn.disabled=false;
+}
+
+function confirmarEliminar(id, nombre){
+  document.getElementById('confirmar-desc').textContent=nombre;
+  document.getElementById('btn-confirmar-eliminar').onclick=async()=>{
+    const d=await api(`/api/usuarios/${id}/`,'DELETE');
+    if(d.ok){ toast(d.mensaje,'success'); cerrarModal('modal-confirmar'); cargarUsuarios(); }
+    else toast(d.error,'error');
+  };
+  abrirModal('modal-confirmar');
+}
+
+cargarUsuarios();
+</script>
+{% endif %}
+{% endblock %}

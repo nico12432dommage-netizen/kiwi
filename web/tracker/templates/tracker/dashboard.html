@@ -1,0 +1,111 @@
+{% extends 'tracker/base.html' %}
+{% block title %}Dashboard — Nico-Kiwi Tracker{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div class="page-title-section">
+    <h1 class="page-title"><span class="page-title-icon">📊</span> Dashboard</h1>
+    <p class="page-subtitle">Resumen general del sistema</p>
+  </div>
+  <div class="page-actions">
+    <button class="btn btn-secondary" onclick="cargarEstadisticas()">🔄 Refrescar</button>
+    <button class="btn btn-primary" onclick="window.location.href='/ventas/'">➕ Nueva venta</button>
+    <button class="btn btn-secondary" onclick="window.location.href='/pallets/'">📦 Nuevo pallet</button>
+  </div>
+</div>
+
+<!-- Cards de estadísticas -->
+<div class="stats-grid" id="stats-grid">
+  <div class="stat-card primary">
+    <div class="stat-icon">📦</div>
+    <div class="stat-value" id="stat-pallets">—</div>
+    <div class="stat-label">Pallets registrados</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon">💰</div>
+    <div class="stat-value" id="stat-ventas">—</div>
+    <div class="stat-label">Ventas registradas</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon">💵</div>
+    <div class="stat-value" id="stat-ingresos">—</div>
+    <div class="stat-label">Ingresos totales ($)</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon">🧺</div>
+    <div class="stat-value" id="stat-cajas">—</div>
+    <div class="stat-label">Total cajas vendidas</div>
+  </div>
+</div>
+
+<!-- Gráfico de últimos 7 días -->
+<div class="chart-card">
+  <div class="chart-title">📈 Ingresos — Últimos 7 días</div>
+  <div class="chart-wrap">
+    <canvas id="chart7dias"></canvas>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+let chartInst = null;
+
+async function cargarEstadisticas(){
+  try {
+    const d = await api('/api/estadisticas/');
+    if(!d.ok) return;
+    const s = d.data;
+
+    // Contadores animados
+    animarContador(document.getElementById('stat-pallets'), s.total_pallets);
+    animarContador(document.getElementById('stat-ventas'),  s.total_ventas);
+    animarContador(document.getElementById('stat-ingresos'), s.total_ingresos, '$');
+    animarContador(document.getElementById('stat-cajas'),   s.total_cajas);
+
+    // Gráfico 7 días
+    const dias = s.ultimos_7_dias;
+    const labels = dias.map(r => r.fecha);
+    const values = dias.map(r => r.total_revenue);
+
+    if(chartInst) chartInst.destroy();
+    const ctx = document.getElementById('chart7dias').getContext('2d');
+    chartInst = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: labels.length ? labels : ['Sin datos'],
+        datasets: [{
+          label: 'Ingresos ($)',
+          data: values.length ? values : [0],
+          backgroundColor: 'rgba(74,222,128,0.25)',
+          borderColor: '#4ade80',
+          borderWidth: 2,
+          borderRadius: 8,
+          hoverBackgroundColor: 'rgba(74,222,128,0.45)',
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { display:false },
+          tooltip: {
+            backgroundColor:'rgba(10,18,11,0.95)',
+            titleColor:'#86efac', bodyColor:'#f0fdf4',
+            borderColor:'rgba(74,222,128,0.3)', borderWidth:1,
+            callbacks: { label: ctx => '$ ' + ctx.raw.toLocaleString('es-AR') }
+          }
+        },
+        scales: {
+          x: { grid:{ color:'rgba(255,255,255,0.05)' }, ticks:{ color:'#4b7459' } },
+          y: { grid:{ color:'rgba(255,255,255,0.05)' }, ticks:{ color:'#4b7459', callback: v=>'$'+v } }
+        }
+      }
+    });
+  } catch(e) { console.error(e); }
+}
+
+cargarEstadisticas();
+</script>
+{% endblock %}

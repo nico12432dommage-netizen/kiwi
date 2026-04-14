@@ -1,0 +1,174 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>{% block title %}Nico-Kiwi Tracker{% endblock %}</title>
+  <meta name="description" content="Sistema de gestión de pallets y ventas Nico-Kiwi"/>
+  <link rel="stylesheet" href="{% static 'tracker/css/style.css' %}"/>
+  {% block extra_css %}{% endblock %}
+  <script>
+    // ---- Funciones globales de sistema (cargadas en el head) ----
+    window.getCookie = function(name) {
+      const v = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
+      return v ? v.pop() : '';
+    };
+
+    window.api = async function(url, method = 'GET', body = null) {
+      const opts = {
+        method,
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': window.getCookie('csrftoken') }
+      };
+      if (body) opts.body = JSON.stringify(body);
+      const r = await fetch(url, opts);
+      if (r.status === 401) { window.location.href = '/login/'; return {}; }
+      if (!r.ok && r.status !== 400 && r.status !== 403) {
+        const txt = await r.text();
+        console.error('API error', r.status, txt);
+        throw new Error(`Error ${r.status}`);
+      }
+      return r.json();
+    };
+  </script>
+</head>
+<body>
+
+<div id="toast-container"></div>
+
+<div class="app-layout">
+  <!-- Botón hamburguesa móvil -->
+  <button class="sidebar-toggle" id="sidebarToggle" aria-label="Menú">☰</button>
+  <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <span class="sidebar-logo-icon">🍃</span>
+      <div>
+        <div class="sidebar-title">Nico-Kiwi</div>
+        <div class="sidebar-version">Tracker v2.0</div>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <div class="nav-section">
+        <div class="nav-section-label">Principal</div>
+        <a href="/" class="nav-item {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}">
+          <span class="nav-icon">📊</span> Dashboard
+        </a>
+      </div>
+      <div class="nav-section">
+        <div class="nav-section-label">Gestión</div>
+        <a href="/pallets/" class="nav-item {% if request.resolver_match.url_name == 'pallets' %}active{% endif %}">
+          <span class="nav-icon">📦</span> Empaquetadora
+        </a>
+        <a href="/ventas/" class="nav-item {% if request.resolver_match.url_name == 'ventas' %}active{% endif %}">
+          <span class="nav-icon">💰</span> Ventas
+        </a>
+      </div>
+      <div class="nav-section">
+        <div class="nav-section-label">Análisis</div>
+        <a href="/reportes/" class="nav-item {% if request.resolver_match.url_name == 'reportes' %}active{% endif %}">
+          <span class="nav-icon">📈</span> Reportes
+        </a>
+      </div>
+      {% if rol == 'admin' %}
+      <div class="nav-section">
+        <div class="nav-section-label">Administración</div>
+        <a href="/usuarios/" class="nav-item {% if request.resolver_match.url_name == 'usuarios' %}active{% endif %}">
+          <span class="nav-icon">👥</span> Usuarios
+        </a>
+      </div>
+      {% endif %}
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="user-card">
+        <div class="user-avatar">{{ usuario|first|upper }}</div>
+        <div class="user-info">
+          <div class="user-name">{{ usuario }}</div>
+          <div class="user-role">{{ rol }}</div>
+        </div>
+        <a href="/logout/" class="logout-btn" title="Cerrar sesión">⏻</a>
+      </div>
+    </div>
+  </aside>
+
+  <!-- CONTENIDO PRINCIPAL -->
+  <main class="main-content">
+    {% block content %}{% endblock %}
+  </main>
+</div>
+
+<script>
+// ---- Funciones de UI y visualización ----
+
+function toast(msg, tipo = 'success') {
+  const c = document.getElementById('toast-container');
+  if (!c) return;
+  const t = document.createElement('div');
+  t.className = `toast toast-${tipo}`;
+  t.innerHTML = `<span class="toast-icon"></span><span class="toast-msg">${msg}</span>`;
+  c.appendChild(t);
+  setTimeout(() => {
+    t.classList.add('hide');
+    setTimeout(() => t.remove(), 350);
+  }, 3500);
+}
+
+function abrirModal(id) { 
+  const el = document.getElementById(id);
+  if (el) el.classList.add('show'); 
+}
+function cerrarModal(id) { 
+  const el = document.getElementById(id);
+  if (el) el.classList.remove('show'); 
+}
+
+function animarContador(el, fin, prefijo = '', sufijo = '') {
+  if (!el) return;
+  const duracion = 1200;
+  const inicio = 0;
+  const startTime = performance.now();
+  function update(now) {
+    const elapsed = now - startTime;
+    const progress = Math.min(elapsed / duracion, 1);
+    const ease = 1 - Math.pow(1 - progress, 3);
+    const val = Math.round(inicio + (fin - inicio) * ease);
+    el.textContent = prefijo + val.toLocaleString('es-AR') + sufijo;
+    if (progress < 1) requestAnimationFrame(update);
+  }
+  requestAnimationFrame(update);
+}
+
+// ---- Inicialización y eventos (al final del bloque) ----
+
+document.addEventListener('DOMContentLoaded', () => {
+  // Sidebar móvil
+  const toggle = document.getElementById('sidebarToggle');
+  const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('sidebarOverlay');
+  if (toggle && sidebar && overlay) {
+    toggle.addEventListener('click', () => {
+      sidebar.classList.toggle('open');
+      overlay.classList.toggle('show');
+    });
+    overlay.addEventListener('click', () => {
+      sidebar.classList.remove('open');
+      overlay.classList.remove('show');
+    });
+  }
+
+  // Atajos de teclado
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      document.querySelectorAll('.modal-backdrop.show').forEach(m => m.classList.remove('show'));
+    }
+  });
+});
+</script>
+{% block extra_js %}{% endblock %}
+</body>
+</html>

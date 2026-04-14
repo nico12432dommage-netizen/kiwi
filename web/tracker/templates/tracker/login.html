@@ -1,0 +1,189 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Nico-Kiwi Tracker — Iniciar Sesión</title>
+  <link rel="stylesheet" href="{% static 'tracker/css/style.css' %}"/>
+</head>
+<body>
+<div id="particles-canvas-wrap">
+  <canvas id="particles-canvas"></canvas>
+</div>
+<div class="login-bg"></div>
+
+<div class="login-page">
+  <div class="login-card">
+    <div class="login-logo">
+      <span class="logo-icon">🍃</span>
+      <h1>Nico-Kiwi Tracker</h1>
+      <p class="subtitle">Sistema de gestión agrícola</p>
+    </div>
+
+    <!-- Pestañas Ingresar / Registrarse -->
+    <div class="login-tabs">
+      <button class="login-tab active" id="tab-login" onclick="mostrarTab('login')">Ingresar</button>
+      <button class="login-tab" id="tab-registro" onclick="mostrarTab('registro')">Crear cuenta</button>
+    </div>
+
+    <!-- Formulario Login -->
+    <div id="form-login">
+      <div class="form-group">
+        <label class="form-label">Usuario</label>
+        <div class="input-icon-wrap">
+          <span class="input-icon">👤</span>
+          <input id="login-user" class="form-input" type="text" placeholder="Tu nombre de usuario" autocomplete="username"/>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Contraseña</label>
+        <div class="input-icon-wrap">
+          <span class="input-icon">🔒</span>
+          <input id="login-pass" class="form-input" type="password" placeholder="••••••••" autocomplete="current-password"/>
+        </div>
+      </div>
+      <div id="login-error" style="color:var(--danger);font-size:13px;margin-bottom:14px;display:none;text-align:center;"></div>
+      <button class="btn btn-primary btn-full btn-lg" id="btn-login" onclick="hacerLogin()">
+        <span id="login-spinner" class="spinner" style="display:none"></span>
+        Ingresar al sistema
+      </button>
+    </div>
+
+    <!-- Formulario Registro -->
+    <div id="form-registro" style="display:none">
+      <div class="form-group">
+        <label class="form-label">Usuario</label>
+        <div class="input-icon-wrap">
+          <span class="input-icon">👤</span>
+          <input id="reg-user" class="form-input" type="text" placeholder="Nombre de usuario"/>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Contraseña</label>
+        <div class="input-icon-wrap">
+          <span class="input-icon">🔒</span>
+          <input id="reg-pass" class="form-input" type="password" placeholder="••••••••"/>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Rol</label>
+        <select id="reg-rol" class="form-select">
+          <option value="operador">Operador</option>
+          <option value="admin">Administrador</option>
+        </select>
+      </div>
+      <div id="reg-error" style="color:var(--danger);font-size:13px;margin-bottom:14px;display:none;text-align:center;"></div>
+      <button class="btn btn-primary btn-full" id="btn-registro" onclick="hacerRegistro()">Crear cuenta</button>
+    </div>
+
+    <p style="text-align:center;font-size:11px;color:var(--text-muted);margin-top:20px;">
+      Usuario por defecto: <strong style="color:var(--accent)">admin</strong> / <strong style="color:var(--accent)">admin</strong>
+    </p>
+  </div>
+</div>
+
+<script>
+// ---- Partículas de fondo ----
+(function(){
+  const canvas = document.getElementById('particles-canvas');
+  const ctx = canvas.getContext('2d');
+  let W, H, particles = [];
+
+  function resize(){ W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; }
+  resize();
+  window.addEventListener('resize', resize);
+
+  for(let i=0; i<70; i++){
+    particles.push({
+      x: Math.random()*window.innerWidth,
+      y: Math.random()*window.innerHeight,
+      r: Math.random()*3+1,
+      dx: (Math.random()-0.5)*0.4,
+      dy: Math.random()*0.5+0.2,
+      o: Math.random()*0.5+0.1,
+    });
+  }
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    particles.forEach(p=>{
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI*2);
+      ctx.fillStyle = `rgba(74,222,128,${p.o})`;
+      ctx.fill();
+      p.x += p.dx; p.y += p.dy;
+      if(p.y > H+5){ p.y=-5; p.x=Math.random()*W; }
+      if(p.x<0) p.x=W; if(p.x>W) p.x=0;
+    });
+    requestAnimationFrame(draw);
+  }
+  draw();
+})();
+
+// ---- Tabs ----
+function mostrarTab(tab){
+  document.getElementById('form-login').style.display = tab==='login' ? 'block' : 'none';
+  document.getElementById('form-registro').style.display = tab==='registro' ? 'block' : 'none';
+  document.getElementById('tab-login').classList.toggle('active', tab==='login');
+  document.getElementById('tab-registro').classList.toggle('active', tab==='registro');
+}
+
+// ---- Login ----
+async function hacerLogin(){
+  const u = document.getElementById('login-user').value.trim();
+  const p = document.getElementById('login-pass').value.trim();
+  const errEl = document.getElementById('login-error');
+  errEl.style.display='none';
+  if(!u||!p){ errEl.textContent='Complete usuario y contraseña'; errEl.style.display='block'; return; }
+  const btn = document.getElementById('btn-login');
+  const sp  = document.getElementById('login-spinner');
+  btn.disabled=true; sp.style.display='inline-block';
+  try{
+    const r = await fetch('/login/', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({usuario:u, password:p})
+    });
+    const d = await r.json();
+    if(d.ok){ window.location.href='/'; }
+    else{ errEl.textContent=d.error||'Error al iniciar sesión'; errEl.style.display='block'; }
+  }catch(e){ errEl.textContent='Error de conexión'; errEl.style.display='block'; }
+  finally{ btn.disabled=false; sp.style.display='none'; }
+}
+
+// ---- Registro ----
+async function hacerRegistro(){
+  const u = document.getElementById('reg-user').value.trim();
+  const p = document.getElementById('reg-pass').value.trim();
+  const r = document.getElementById('reg-rol').value;
+  const errEl = document.getElementById('reg-error');
+  errEl.style.display='none';
+  if(!u||!p){ errEl.textContent='Complete usuario y contraseña'; errEl.style.display='block'; return; }
+  const btn = document.getElementById('btn-registro');
+  btn.disabled=true;
+  try{
+    const res = await fetch('/api/usuarios/', {
+      method:'POST',
+      headers:{'Content-Type':'application/json','X-CSRFToken':getCookie('csrftoken')},
+      body: JSON.stringify({username:u, password:p, role:r})
+    });
+    const d = await res.json();
+    if(d.ok){ mostrarTab('login'); alert('¡Cuenta creada! Ahora podés ingresar.'); }
+    else{ errEl.textContent=d.error||'Error al crear cuenta'; errEl.style.display='block'; }
+  }catch(e){ errEl.textContent='Error de conexión'; errEl.style.display='block'; }
+  finally{ btn.disabled=false; }
+}
+
+function getCookie(name){
+  const v=document.cookie.match('(^|;)\\s*'+name+'\\s*=\\s*([^;]+)');
+  return v?v.pop():'';
+}
+
+// Enter para login
+document.addEventListener('keydown', e => {
+  if(e.key==='Enter') document.getElementById('btn-login').click();
+});
+</script>
+</body>
+</html>

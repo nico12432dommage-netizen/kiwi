@@ -1,0 +1,196 @@
+{% extends 'tracker/base.html' %}
+{% block title %}Reportes — Nico-Kiwi Tracker{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div class="page-title-section">
+    <h1 class="page-title"><span class="page-title-icon">📈</span> Reportes y Gráficos</h1>
+    <p class="page-subtitle">Análisis de ventas por período</p>
+  </div>
+  <div class="page-actions">
+    <a href="/api/export/ventas/" class="btn btn-info">⬇️ Exportar Excel</a>
+  </div>
+</div>
+
+<!-- Filtros -->
+<div class="filter-bar">
+  <div class="form-group">
+    <label>Desde</label>
+    <input id="desde" class="form-input" type="date" style="width:160px"/>
+  </div>
+  <div class="form-group">
+    <label>Hasta</label>
+    <input id="hasta" class="form-input" type="date" style="width:160px"/>
+  </div>
+  <div class="form-group">
+    <label>Agrupar por</label>
+    <div class="radio-group">
+      <label class="radio-option selected" id="opt-dia">
+        <input type="radio" name="agrupado" value="dia" checked onchange="seleccionarAgrupado('dia')"/> 📅 Por día
+      </label>
+      <label class="radio-option" id="opt-mes">
+        <input type="radio" name="agrupado" value="mes" onchange="seleccionarAgrupado('mes')"/> 📆 Por mes
+      </label>
+    </div>
+  </div>
+  <div class="form-group">
+    <label>&nbsp;</label>
+    <button class="btn btn-primary" onclick="generarReporte()">📊 Generar</button>
+  </div>
+</div>
+
+<!-- Cards de resumen del período -->
+<div class="stats-grid" id="stats-periodo" style="display:none">
+  <div class="stat-card primary">
+    <div class="stat-icon">💵</div>
+    <div class="stat-value" id="rpt-total">$0</div>
+    <div class="stat-label">Ingreso total del período</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon">📊</div>
+    <div class="stat-value" id="rpt-promedio">$0</div>
+    <div class="stat-label">Promedio por período</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon">🧺</div>
+    <div class="stat-value" id="rpt-cajas">0</div>
+    <div class="stat-label">Total cajas vendidas</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon">📅</div>
+    <div class="stat-value" id="rpt-periodos">0</div>
+    <div class="stat-label">Períodos con ventas</div>
+  </div>
+</div>
+
+<!-- Gráfico de barras -->
+<div class="chart-card" id="chart-bar-card" style="display:none">
+  <div class="chart-title" id="chart-titulo">📊 Ingresos por período</div>
+  <div class="chart-wrap">
+    <canvas id="chartBarras"></canvas>
+  </div>
+</div>
+
+<!-- Gráfico de línea de tendencia -->
+<div class="chart-card" id="chart-linea-card" style="display:none">
+  <div class="chart-title">📉 Tendencia de ingresos</div>
+  <div class="chart-wrap" style="height:220px">
+    <canvas id="chartLinea"></canvas>
+  </div>
+</div>
+
+<div id="empty-reporte" style="display:none">
+  <div class="empty-state"><span class="empty-icon">📊</span><p>No hay datos para el período seleccionado</p></div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+let chartBar = null, chartLine = null;
+let agrupado = 'dia';
+
+// Fechas por defecto
+const hoy = new Date();
+const hace30 = new Date(); hace30.setDate(hoy.getDate()-30);
+document.getElementById('desde').value = hace30.toISOString().split('T')[0];
+document.getElementById('hasta').value = hoy.toISOString().split('T')[0];
+
+function seleccionarAgrupado(val){
+  agrupado = val;
+  document.getElementById('opt-dia').classList.toggle('selected', val==='dia');
+  document.getElementById('opt-mes').classList.toggle('selected', val==='mes');
+}
+
+const chartOpts = (titulo, color) => ({
+  responsive:true, maintainAspectRatio:false,
+  plugins:{
+    legend:{display:false},
+    tooltip:{
+      backgroundColor:'rgba(10,18,11,0.95)',
+      titleColor:'#86efac', bodyColor:'#f0fdf4',
+      borderColor:'rgba(74,222,128,0.3)', borderWidth:1,
+      callbacks:{ label: c=>'$ '+c.raw.toLocaleString('es-AR',{minimumFractionDigits:2}) }
+    }
+  },
+  scales:{
+    x:{ grid:{color:'rgba(255,255,255,0.04)'}, ticks:{color:'#4b7459', maxRotation:45} },
+    y:{ grid:{color:'rgba(255,255,255,0.04)'}, ticks:{color:'#4b7459', callback:v=>'$'+v} }
+  }
+});
+
+async function generarReporte(){
+  const desde = document.getElementById('desde').value;
+  const hasta = document.getElementById('hasta').value;
+  if(!desde||!hasta){ toast('Seleccioná el rango de fechas','error'); return; }
+
+  const url = agrupado==='dia'
+    ? `/api/reportes/por-dia/?desde=${desde}&hasta=${hasta}`
+    : `/api/reportes/por-mes/?desde=${desde}&hasta=${hasta}`;
+
+  const d = await api(url);
+  if(!d.ok){ toast('Error al generar reporte','error'); return; }
+  const rows = d.data;
+
+  document.getElementById('empty-reporte').style.display   = rows.length?'none':'block';
+  document.getElementById('chart-bar-card').style.display  = rows.length?'block':'none';
+  document.getElementById('chart-linea-card').style.display= rows.length>1?'block':'none';
+  document.getElementById('stats-periodo').style.display   = rows.length?'grid':'none';
+
+  if(!rows.length) return;
+
+  const labels = rows.map(r => agrupado==='dia' ? r.fecha : r.mes);
+  const ingresos = rows.map(r => r.total_revenue);
+  const cajas    = rows.map(r => r.total_cajas||0);
+  const total    = ingresos.reduce((a,b)=>a+b,0);
+  const promedio = total/rows.length;
+  const totalCajas = cajas.reduce((a,b)=>a+b,0);
+
+  document.getElementById('rpt-total').textContent   = '$'+total.toLocaleString('es-AR',{minimumFractionDigits:2});
+  document.getElementById('rpt-promedio').textContent= '$'+promedio.toLocaleString('es-AR',{minimumFractionDigits:2});
+  document.getElementById('rpt-cajas').textContent   = totalCajas.toLocaleString('es-AR');
+  document.getElementById('rpt-periodos').textContent= rows.length;
+  document.getElementById('chart-titulo').textContent= `📊 Ingresos ${agrupado==='dia'?'por día':'por mes'} (${desde} → ${hasta})`;
+
+  // Gráfico de barras
+  if(chartBar) chartBar.destroy();
+  chartBar = new Chart(document.getElementById('chartBarras').getContext('2d'), {
+    type:'bar',
+    data:{
+      labels,
+      datasets:[{
+        label:'Ingresos ($)',
+        data:ingresos,
+        backgroundColor:'rgba(74,222,128,0.22)',
+        borderColor:'#4ade80',
+        borderWidth:2,
+        borderRadius:8,
+        hoverBackgroundColor:'rgba(74,222,128,0.45)',
+      }]
+    },
+    options: chartOpts()
+  });
+
+  // Gráfico de línea
+  if(chartLine) chartLine.destroy();
+  chartLine = new Chart(document.getElementById('chartLinea').getContext('2d'), {
+    type:'line',
+    data:{
+      labels,
+      datasets:[{
+        label:'Tendencia',
+        data:ingresos,
+        borderColor:'#86efac',
+        backgroundColor:'rgba(134,239,172,0.08)',
+        borderWidth:2,
+        fill:true,
+        tension:0.4,
+        pointBackgroundColor:'#4ade80',
+        pointRadius:4,
+        pointHoverRadius:7,
+      }]
+    },
+    options: chartOpts()
+  });
+}
+</script>
+{% endblock %}

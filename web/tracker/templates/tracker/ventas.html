@@ -1,0 +1,220 @@
+{% extends 'tracker/base.html' %}
+{% block title %}Ventas — Nico-Kiwi Tracker{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div class="page-title-section">
+    <h1 class="page-title"><span class="page-title-icon">💰</span> Ventas</h1>
+    <p class="page-subtitle">Registro y gestión de ventas</p>
+  </div>
+  <div class="page-actions">
+    <a href="/api/export/ventas/" class="btn btn-info">⬇️ Exportar Excel</a>
+    <button class="btn btn-primary" onclick="abrirNueva()">➕ Nueva Venta</button>
+  </div>
+</div>
+
+<!-- Tabla -->
+<div class="table-card">
+  <div class="table-header">
+    <div class="table-title">💰 Ventas registradas <span id="count-badge" class="badge badge-green" style="margin-left:8px">0</span></div>
+    <div class="table-search-wrap">
+      <span class="search-icon">🔍</span>
+      <input class="table-search" id="buscador" type="text" placeholder="Buscar venta..." oninput="filtrar()"/>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>#</th><th>Fecha</th><th>Tipo de caja</th><th>Cantidad</th><th>Precio unit.</th><th>Total</th><th>Operador</th><th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody id="tbody-ventas">
+        <tr><td colspan="8"><div class="empty-state"><span class="empty-icon">⏳</span><p>Cargando...</p></div></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="table-footer">
+    <span id="footer-count">Cargando...</span>
+    <span id="footer-total" style="color:var(--primary);font-weight:700;"></span>
+  </div>
+</div>
+
+<!-- Modal Venta -->
+<div class="modal-backdrop" id="modal-venta">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="modal-venta-titulo">💰 Nueva Venta</div>
+      <button class="modal-close" onclick="cerrarModal('modal-venta')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="venta-id"/>
+      <div class="form-group">
+        <label class="form-label">Fecha</label>
+        <input id="venta-fecha" class="form-input" type="date"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Tipo de caja</label>
+        <select id="venta-caja" class="form-select">
+          {% for c in cajas %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Cantidad (cajas)</label>
+        <input id="venta-cantidad" class="form-input" type="number" min="1" placeholder="Ej: 100"/>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Precio unitario ($)</label>
+        <input id="venta-precio" class="form-input" type="number" step="0.01" min="0" placeholder="Ej: 2.50"/>
+      </div>
+      <!-- Preview total en tiempo real -->
+      <div style="background:var(--primary-glass);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px 16px;display:flex;justify-content:space-between;align-items:center;">
+        <span style="font-size:13px;color:var(--text-muted)">Total estimado:</span>
+        <span id="preview-total" style="font-size:18px;font-weight:800;color:var(--primary)">$0.00</span>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="cerrarModal('modal-venta')">Cancelar</button>
+      <button class="btn btn-primary" id="btn-guardar-venta" onclick="guardarVenta()">💾 Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Confirmar Eliminar -->
+<div class="modal-backdrop" id="modal-confirmar">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-header">
+      <div class="modal-title">⚠️ Confirmar eliminación</div>
+      <button class="modal-close" onclick="cerrarModal('modal-confirmar')">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="color:var(--text-secondary);font-size:14px">¿Eliminar la venta <strong id="confirmar-desc"></strong>? Esta acción no se puede deshacer.</p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="cerrarModal('modal-confirmar')">Cancelar</button>
+      <button class="btn btn-danger" id="btn-confirmar-eliminar">🗑️ Eliminar</button>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let ventas = [];
+const hoy = new Date().toISOString().split('T')[0];
+document.getElementById('venta-fecha').value = hoy;
+
+// Preview total en tiempo real
+['venta-cantidad','venta-precio'].forEach(id => {
+  document.getElementById(id).addEventListener('input', actualizarPreview);
+});
+function actualizarPreview(){
+  const c = parseFloat(document.getElementById('venta-cantidad').value)||0;
+  const p = parseFloat(document.getElementById('venta-precio').value)||0;
+  document.getElementById('preview-total').textContent = '$' + (c*p).toLocaleString('es-AR', {minimumFractionDigits:2});
+}
+
+async function cargarVentas(){
+  try {
+    const d = await api('/api/ventas/');
+    if(!d || !d.ok){ toast('Error al cargar ventas','error'); return; }
+    ventas = d.data;
+    renderTabla(ventas);
+  } catch(e) {
+    console.error(e);
+    document.getElementById('tbody-ventas').innerHTML =
+      `<tr><td colspan="8"><div class="empty-state"><span class="empty-icon">⚠️</span><p>Error al cargar datos: ${e.message}</p></div></td></tr>`;
+    toast('Error al cargar ventas: ' + e.message, 'error');
+  }
+}
+
+function renderTabla(data){
+  const tb = document.getElementById('tbody-ventas');
+  document.getElementById('count-badge').textContent = data.length;
+  const totalGeneral = data.reduce((a,v)=>a+v.total,0);
+  document.getElementById('footer-count').textContent = `${data.length} venta${data.length!==1?'s':''} encontrada${data.length!==1?'s':''}`;
+  document.getElementById('footer-total').textContent = `Total: $${totalGeneral.toLocaleString('es-AR',{minimumFractionDigits:2})}`;
+  if(!data.length){
+    tb.innerHTML = `<tr><td colspan="8"><div class="empty-state"><span class="empty-icon">💰</span><p>No hay ventas registradas</p></div></td></tr>`;
+    return;
+  }
+  tb.innerHTML = data.map(v=>`
+    <tr>
+      <td><span class="badge badge-green">#${v.id}</span></td>
+      <td>${v.fecha}</td>
+      <td><span class="badge badge-blue">${v.caja_tipo}</span></td>
+      <td>${v.cantidad}</td>
+      <td>$${parseFloat(v.precio_unitario).toFixed(2)}</td>
+      <td><strong style="color:var(--primary)">$${v.total.toLocaleString('es-AR',{minimumFractionDigits:2})}</strong></td>
+      <td>${v.usuario}</td>
+      <td>
+        <div class="row-actions">
+          <button class="btn btn-warning btn-sm" onclick="editarVenta(${v.id})">✏️ <span>Editar</span></button>
+          <button class="btn btn-danger btn-sm" onclick="confirmarEliminar(${v.id}, \`${v.caja_tipo.replace(/`/g,'\\`')} — ${v.fecha}\`)">🗑️ <span>Eliminar</span></button>
+        </div>
+      </td>
+    </tr>`).join('');
+}
+
+function filtrar(){
+  const q = document.getElementById('buscador').value.toLowerCase();
+  renderTabla(ventas.filter(v=>
+    String(v.id).includes(q)||v.caja_tipo.toLowerCase().includes(q)||v.fecha.includes(q)||v.usuario.toLowerCase().includes(q)
+  ));
+}
+
+function abrirNueva(){
+  document.getElementById('venta-id').value='';
+  document.getElementById('venta-fecha').value=hoy;
+  document.getElementById('venta-cantidad').value='1';
+  document.getElementById('venta-precio').value='2.50';
+  document.getElementById('modal-venta-titulo').textContent='💰 Nueva Venta';
+  actualizarPreview();
+  abrirModal('modal-venta');
+}
+
+async function editarVenta(id){
+  const d = await api(`/api/ventas/${id}/`);
+  if(!d.ok){ toast('No se pudo cargar la venta','error'); return; }
+  const v = d.data;
+  document.getElementById('venta-id').value=v.id;
+  document.getElementById('venta-fecha').value=v.fecha;
+  document.getElementById('venta-caja').value=v.caja_tipo;
+  document.getElementById('venta-cantidad').value=v.cantidad;
+  document.getElementById('venta-precio').value=v.precio_unitario;
+  document.getElementById('modal-venta-titulo').textContent=`✏️ Editar Venta #${v.id}`;
+  actualizarPreview();
+  abrirModal('modal-venta');
+}
+
+async function guardarVenta(){
+  const id      = document.getElementById('venta-id').value;
+  const fecha   = document.getElementById('venta-fecha').value;
+  const caja_tipo = document.getElementById('venta-caja').value;
+  const cantidad= parseInt(document.getElementById('venta-cantidad').value);
+  const precio_unitario = parseFloat(document.getElementById('venta-precio').value);
+  if(!fecha||!cantidad||!precio_unitario){ toast('Completá todos los campos','error'); return; }
+  const btn = document.getElementById('btn-guardar-venta');
+  btn.disabled=true;
+  const url=id?`/api/ventas/${id}/`:'/api/ventas/';
+  const method=id?'PUT':'POST';
+  const d=await api(url,method,{fecha,caja_tipo,cantidad,precio_unitario});
+  if(d.ok){ toast(d.mensaje,'success'); cerrarModal('modal-venta'); cargarVentas(); }
+  else toast(d.error||'Error al guardar','error');
+  btn.disabled=false;
+}
+
+function confirmarEliminar(id,desc){
+  document.getElementById('confirmar-desc').textContent=`#${id} (${desc})`;
+  document.getElementById('btn-confirmar-eliminar').onclick=async()=>{
+    const d=await api(`/api/ventas/${id}/`,'DELETE');
+    if(d.ok){ toast(d.mensaje,'success'); cerrarModal('modal-confirmar'); cargarVentas(); }
+    else toast(d.error,'error');
+  };
+  abrirModal('modal-confirmar');
+}
+
+cargarVentas();
+</script>
+{% endblock %}

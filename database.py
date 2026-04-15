@@ -1,68 +1,130 @@
-# database.py
-# Manejo de la base de datos SQLite y utilidades: usuarios, palets, ventas, export y sync a Google Sheets
-
+import os
 import sqlite3
+import dj_database_url
 from passlib.hash import pbkdf2_sha256
 
 DB_FILE = "nico_kiwi.db"
+DATABASE_URL = os.environ.get('DATABASE_URL')
+
+def is_postgres():
+    return DATABASE_URL is not None
+
+def get_ph():
+    """Retorna el marcador de posición de SQL según el motor."""
+    return '%s' if is_postgres() else '?'
 
 def get_conn():
-    conn = sqlite3.connect(DB_FILE, timeout=30)
-    conn.row_factory = sqlite3.Row
-    return conn
+    if is_postgres():
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+        conn = psycopg2.connect(DATABASE_URL)
+        return conn
+    else:
+        conn = sqlite3.connect(DB_FILE, timeout=30)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+def get_cursor(conn):
+    if is_postgres():
+        from psycopg2.extras import RealDictCursor
+        return conn.cursor(cursor_factory=RealDictCursor)
+    else:
+        return conn.cursor()
 
 def create_tables():
     conn = get_conn()
-    c = conn.cursor()
-    # Usuarios
-    c.execute('''
-    CREATE TABLE IF NOT EXISTS usuarios (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT UNIQUE NOT NULL,
-        password_hash TEXT NOT NULL,
-        role TEXT NOT NULL DEFAULT 'operador'
-    )
-    ''')
-    # Palets (empaquetadora)
-    c.execute('''
-    CREATE TABLE IF NOT EXISTS palets (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        peso REAL NOT NULL,
-        calibre TEXT NOT NULL,
-        fecha TEXT NOT NULL,
-        usuario TEXT NOT NULL
-    )
-    ''')
-    # Ventas
-    c.execute('''
-    CREATE TABLE IF NOT EXISTS ventas (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        fecha TEXT NOT NULL,             -- formato 'YYYY-MM-DD'
-        caja_tipo TEXT NOT NULL,
-        cantidad INTEGER NOT NULL,
-        precio_unitario REAL NOT NULL,
-        usuario TEXT NOT NULL
-    )
-    ''')
-    # Tabla para llevar el último id sincronizado (Google Sheets)
-    c.execute('''
-    CREATE TABLE IF NOT EXISTS sync_status (
-        key TEXT PRIMARY KEY,
-        value TEXT
-    )
-    ''')
+    c = get_cursor(conn)
+    
+    if is_postgres():
+        # Usuarios
+        c.execute('''
+        CREATE TABLE IF NOT EXISTS usuarios (
+            id SERIAL PRIMARY KEY,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'operador'
+        )
+        ''')
+        # Palets
+        c.execute('''
+        CREATE TABLE IF NOT EXISTS palets (
+            id SERIAL PRIMARY KEY,
+            peso REAL NOT NULL,
+            calibre TEXT NOT NULL,
+            fecha TEXT NOT NULL,
+            usuario TEXT NOT NULL
+        )
+        ''')
+        # Ventas
+        c.execute('''
+        CREATE TABLE IF NOT EXISTS ventas (
+            id SERIAL PRIMARY KEY,
+            fecha TEXT NOT NULL,
+            caja_tipo TEXT NOT NULL,
+            cantidad INTEGER NOT NULL,
+            precio_unitario REAL NOT NULL,
+            usuario TEXT NOT NULL
+        )
+        ''')
+        # Sync Status
+        c.execute('''
+        CREATE TABLE IF NOT EXISTS sync_status (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+        ''')
+    else:
+        # SQLite
+        c.execute('''
+        CREATE TABLE IF NOT EXISTS usuarios (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'operador'
+        )
+        ''')
+        c.execute('''
+        CREATE TABLE IF NOT EXISTS palets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            peso REAL NOT NULL,
+            calibre TEXT NOT NULL,
+            fecha TEXT NOT NULL,
+            usuario TEXT NOT NULL
+        )
+        ''')
+        c.execute('''
+        CREATE TABLE IF NOT EXISTS ventas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fecha TEXT NOT NULL,
+            caja_tipo TEXT NOT NULL,
+            cantidad INTEGER NOT NULL,
+            precio_unitario REAL NOT NULL,
+            usuario TEXT NOT NULL
+        )
+        ''')
+        c.execute('''
+        CREATE TABLE IF NOT EXISTS sync_status (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+        ''')
+
     # Si no hay usuarios, crear admin por defecto
     c.execute("SELECT COUNT(*) AS cnt FROM usuarios")
     row = c.fetchone()
     if row and row["cnt"] == 0:
         pw_hash = pbkdf2_sha256.hash("admin")
-        c.execute("INSERT INTO usuarios (username, password_hash, role) VALUES (?, ?, ?)",
+        ph = get_ph()
+        c.execute(f"INSERT INTO usuarios (username, password_hash, role) VALUES ({ph}, {ph}, {ph})",
                   ("admin", pw_hash, "admin"))
         print("-> Creado usuario por defecto -> usuario: admin / contraseña: admin  (cámbiala después)")
+    
     # Asegurar clave last_sale_id
-    c.execute("SELECT value FROM sync_status WHERE key='last_sale_id'")
+    ph = get_ph()
+    c.execute(f"SELECT value FROM sync_status WHERE key={ph}", ("last_sale_id",))
     if not c.fetchone():
-        c.execute("INSERT INTO sync_status (key, value) VALUES (?, ?)", ("last_sale_id", "0"))
+        c.execute(f"INSERT INTO sync_status (key, value) VALUES ({ph}, {ph})", ("last_sale_id", "0"))
+    
     conn.commit()
     conn.close()
 
@@ -71,22 +133,24 @@ def create_tables():
 # --------------------------
 def add_user(username, password, role="operador"):
     conn = get_conn()
-    c = conn.cursor()
+    c = get_cursor(conn)
+    ph = get_ph()
     try:
         pw_hash = pbkdf2_sha256.hash(password)
-        c.execute("INSERT INTO usuarios (username, password_hash, role) VALUES (?, ?, ?)",
+        c.execute(f"INSERT INTO usuarios (username, password_hash, role) VALUES ({ph}, {ph}, {ph})",
                   (username, pw_hash, role))
         conn.commit()
         return True, None
-    except sqlite3.IntegrityError as e:
-        return False, "El usuario ya existe"
+    except Exception as e:
+        return False, "El usuario ya existe o error en DB"
     finally:
         conn.close()
 
 def verify_user(username, password):
     conn = get_conn()
-    c = conn.cursor()
-    c.execute("SELECT password_hash FROM usuarios WHERE username = ?", (username,))
+    c = get_cursor(conn)
+    ph = get_ph()
+    c.execute(f"SELECT password_hash FROM usuarios WHERE username = {ph}", (username,))
     row = c.fetchone()
     conn.close()
     if not row:
@@ -95,7 +159,7 @@ def verify_user(username, password):
 
 def list_users():
     conn = get_conn()
-    c = conn.cursor()
+    c = get_cursor(conn)
     c.execute("SELECT id, username, role FROM usuarios ORDER BY username")
     rows = [dict(r) for r in c.fetchall()]
     conn.close()
@@ -103,22 +167,24 @@ def list_users():
 
 def update_user(user_id, new_username, new_password, new_role):
     conn = get_conn()
-    c = conn.cursor()
+    c = get_cursor(conn)
+    ph = get_ph()
     pw_hash = pbkdf2_sha256.hash(new_password)
     try:
-        c.execute("UPDATE usuarios SET username=?, password_hash=?, role=? WHERE id=?",
+        c.execute(f"UPDATE usuarios SET username={ph}, password_hash={ph}, role={ph} WHERE id={ph}",
                   (new_username, pw_hash, new_role, user_id))
         conn.commit()
         return True, None
-    except sqlite3.IntegrityError:
-        return False, "El nuevo nombre de usuario ya existe"
+    except Exception:
+        return False, "El nuevo nombre de usuario ya existe o error en DB"
     finally:
         conn.close()
 
 def delete_user(user_id):
     conn = get_conn()
-    c = conn.cursor()
-    c.execute("DELETE FROM usuarios WHERE id = ?", (user_id,))
+    c = get_cursor(conn)
+    ph = get_ph()
+    c.execute(f"DELETE FROM usuarios WHERE id = {ph}", (user_id,))
     conn.commit()
     conn.close()
 
@@ -127,17 +193,24 @@ def delete_user(user_id):
 # --------------------------
 def add_pallet(peso, calibre, fecha, usuario):
     conn = get_conn()
-    c = conn.cursor()
-    c.execute("INSERT INTO palets (peso, calibre, fecha, usuario) VALUES (?, ?, ?, ?)",
+    c = get_cursor(conn)
+    ph = get_ph()
+    c.execute(f"INSERT INTO palets (peso, calibre, fecha, usuario) VALUES ({ph}, {ph}, {ph}, {ph})",
               (peso, calibre, fecha, usuario))
     conn.commit()
-    last_id = c.lastrowid
+    
+    if is_postgres():
+        c.execute("SELECT lastval()")
+        last_id = c.fetchone()['lastval']
+    else:
+        last_id = c.lastrowid
+        
     conn.close()
     return last_id
 
 def list_pallets():
     conn = get_conn()
-    c = conn.cursor()
+    c = get_cursor(conn)
     c.execute("SELECT id, peso, calibre, fecha, usuario FROM palets ORDER BY fecha DESC, id DESC")
     rows = [dict(r) for r in c.fetchall()]
     conn.close()
@@ -145,24 +218,27 @@ def list_pallets():
 
 def get_pallet(pallet_id):
     conn = get_conn()
-    c = conn.cursor()
-    c.execute("SELECT id, peso, calibre, fecha, usuario FROM palets WHERE id = ?", (pallet_id,))
+    c = get_cursor(conn)
+    ph = get_ph()
+    c.execute(f"SELECT id, peso, calibre, fecha, usuario FROM palets WHERE id = {ph}", (pallet_id,))
     row = c.fetchone()
     conn.close()
     return dict(row) if row else None
 
 def update_pallet(pallet_id, peso, calibre, fecha, usuario):
     conn = get_conn()
-    c = conn.cursor()
-    c.execute("UPDATE palets SET peso=?, calibre=?, fecha=?, usuario=? WHERE id=?",
+    c = get_cursor(conn)
+    ph = get_ph()
+    c.execute(f"UPDATE palets SET peso={ph}, calibre={ph}, fecha={ph}, usuario={ph} WHERE id={ph}",
               (peso, calibre, fecha, usuario, pallet_id))
     conn.commit()
     conn.close()
 
 def delete_pallet(pallet_id):
     conn = get_conn()
-    c = conn.cursor()
-    c.execute("DELETE FROM palets WHERE id=?", (pallet_id,))
+    c = get_cursor(conn)
+    ph = get_ph()
+    c.execute(f"DELETE FROM palets WHERE id={ph}", (pallet_id,))
     conn.commit()
     conn.close()
 
@@ -171,17 +247,24 @@ def delete_pallet(pallet_id):
 # --------------------------
 def add_sale(fecha, caja_tipo, cantidad, precio_unitario, usuario):
     conn = get_conn()
-    c = conn.cursor()
-    c.execute("INSERT INTO ventas (fecha, caja_tipo, cantidad, precio_unitario, usuario) VALUES (?, ?, ?, ?, ?)",
+    c = get_cursor(conn)
+    ph = get_ph()
+    c.execute(f"INSERT INTO ventas (fecha, caja_tipo, cantidad, precio_unitario, usuario) VALUES ({ph}, {ph}, {ph}, {ph}, {ph})",
               (fecha, caja_tipo, cantidad, precio_unitario, usuario))
     conn.commit()
-    last_id = c.lastrowid
+    
+    if is_postgres():
+        c.execute("SELECT lastval()")
+        last_id = c.fetchone()['lastval']
+    else:
+        last_id = c.lastrowid
+        
     conn.close()
     return last_id
 
 def list_sales():
     conn = get_conn()
-    c = conn.cursor()
+    c = get_cursor(conn)
     c.execute("SELECT id, fecha, caja_tipo, cantidad, precio_unitario, usuario FROM ventas ORDER BY fecha DESC, id DESC")
     rows = [dict(r) for r in c.fetchall()]
     conn.close()
@@ -189,24 +272,27 @@ def list_sales():
 
 def get_sale(sale_id):
     conn = get_conn()
-    c = conn.cursor()
-    c.execute("SELECT id, fecha, caja_tipo, cantidad, precio_unitario, usuario FROM ventas WHERE id = ?", (sale_id,))
+    c = get_cursor(conn)
+    ph = get_ph()
+    c.execute(f"SELECT id, fecha, caja_tipo, cantidad, precio_unitario, usuario FROM ventas WHERE id = {ph}", (sale_id,))
     row = c.fetchone()
     conn.close()
     return dict(row) if row else None
 
 def update_sale(sale_id, fecha, caja_tipo, cantidad, precio_unitario, usuario):
     conn = get_conn()
-    c = conn.cursor()
-    c.execute("UPDATE ventas SET fecha=?, caja_tipo=?, cantidad=?, precio_unitario=?, usuario=? WHERE id=?",
+    c = get_cursor(conn)
+    ph = get_ph()
+    c.execute(f"UPDATE ventas SET fecha={ph}, caja_tipo={ph}, cantidad={ph}, precio_unitario={ph}, usuario={ph} WHERE id={ph}",
               (fecha, caja_tipo, cantidad, precio_unitario, usuario, sale_id))
     conn.commit()
     conn.close()
 
 def delete_sale(sale_id):
     conn = get_conn()
-    c = conn.cursor()
-    c.execute("DELETE FROM ventas WHERE id=?", (sale_id,))
+    c = get_cursor(conn)
+    ph = get_ph()
+    c.execute(f"DELETE FROM ventas WHERE id={ph}", (sale_id,))
     conn.commit()
     conn.close()
 
@@ -215,11 +301,12 @@ def delete_sale(sale_id):
 # --------------------------
 def sales_aggregate_by_day(start_date, end_date):
     conn = get_conn()
-    c = conn.cursor()
-    c.execute('''
+    c = get_cursor(conn)
+    ph = get_ph()
+    c.execute(f'''
     SELECT fecha, SUM(cantidad * precio_unitario) AS total_revenue, SUM(cantidad) AS total_cajas
     FROM ventas
-    WHERE fecha BETWEEN ? AND ?
+    WHERE fecha BETWEEN {ph} AND {ph}
     GROUP BY fecha
     ORDER BY fecha
     ''', (start_date, end_date))
@@ -229,12 +316,16 @@ def sales_aggregate_by_day(start_date, end_date):
 
 def sales_aggregate_by_month(start_date, end_date):
     conn = get_conn()
-    c = conn.cursor()
-    # substr(fecha,1,7) -> 'YYYY-MM'
-    c.execute('''
-    SELECT substr(fecha,1,7) AS mes, SUM(cantidad * precio_unitario) AS total_revenue, SUM(cantidad) AS total_cajas
+    c = get_cursor(conn)
+    ph = get_ph()
+    
+    # Adaptar substr para PostgreSQL si es necesario (SUBSTR funciona en ambos mayormente, pero PG es estricto)
+    func_substr = "SUBSTR" if is_postgres() else "substr"
+    
+    c.execute(f'''
+    SELECT {func_substr}(fecha,1,7) AS mes, SUM(cantidad * precio_unitario) AS total_revenue, SUM(cantidad) AS total_cajas
     FROM ventas
-    WHERE fecha BETWEEN ? AND ?
+    WHERE fecha BETWEEN {ph} AND {ph}
     GROUP BY mes
     ORDER BY mes
     ''', (start_date, end_date))
@@ -278,16 +369,24 @@ def export_pallets_to_excel(path):
 # --------------------------
 def get_last_synced_sale_id():
     conn = get_conn()
-    c = conn.cursor()
-    c.execute("SELECT value FROM sync_status WHERE key='last_sale_id'")
+    c = get_cursor(conn)
+    ph = get_ph()
+    c.execute(f"SELECT value FROM sync_status WHERE key={ph}", ("last_sale_id",))
     row = c.fetchone()
     conn.close()
     return int(row["value"]) if row and row["value"] is not None else 0
 
 def set_last_synced_sale_id(last_id):
     conn = get_conn()
-    c = conn.cursor()
-    c.execute("INSERT OR REPLACE INTO sync_status (key, value) VALUES ('last_sale_id', ?)", (str(last_id),))
+    c = get_cursor(conn)
+    ph = get_ph()
+    if is_postgres():
+        c.execute("""
+            INSERT INTO sync_status (key, value) VALUES ('last_sale_id', %s)
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+        """, (str(last_id),))
+    else:
+        c.execute("INSERT OR REPLACE INTO sync_status (key, value) VALUES ('last_sale_id', ?)", (str(last_id),))
     conn.commit()
     conn.close()
 
@@ -308,8 +407,9 @@ def sync_sales_to_google(service_account_file, spreadsheet_id, sheet_name="Venta
 
     last_id = get_last_synced_sale_id()
     conn = get_conn()
-    c = conn.cursor()
-    c.execute("SELECT id, fecha, caja_tipo, cantidad, precio_unitario, usuario FROM ventas WHERE id > ? ORDER BY id", (last_id,))
+    c = get_cursor(conn)
+    ph = get_ph()
+    c.execute(f"SELECT id, fecha, caja_tipo, cantidad, precio_unitario, usuario FROM ventas WHERE id > {ph} ORDER BY id", (last_id,))
     rows = c.fetchall()
     if not rows:
         conn.close()
